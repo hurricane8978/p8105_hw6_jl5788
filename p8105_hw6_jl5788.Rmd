@@ -8,6 +8,9 @@ library(tidyverse)
 
 library(rvest)
 library(httr)
+library(p8105.datasets)
+library(modelr)
+library(mgcv)
 
 knitr::opts_chunk$set(
   fig.width = 6,
@@ -46,7 +49,7 @@ colSums(is.na(baby_birthweight_df))
 baby_birthweight_df %>% skimr::skim_without_charts()
 ```
 
-There is a sense that baby's head circumference at birth positively correlated to baby's birth weight and at the genetic level,mother's race plays a important role in baby's birth weight.
+There is a sense that baby's head circumference at birth is positively correlated to baby's birth weight and at the genetic level,mother's race plays a important role in baby's birth weight.
 
 ```{r}
 baby_birthweight_df %>% 
@@ -68,7 +71,8 @@ my_fit = lm(bwt ~ bhead  +  mrace,data=baby_birthweight_df )
 
 broom::tidy(my_fit) %>% 
   select(term,estimate,p.value) %>% 
-  mutate(term=str_replace(term,"mrace","Mother's race:")) 
+  mutate(term=str_replace(term,"mrace","Mother's race:")) %>% 
+  knitr::kable()
 
 ```
 
@@ -103,8 +107,91 @@ cv_df=
   mutate(my_fit = map(.x = train, ~lm(bwt ~ bhead + mrace, data = .x )),
     fit2 = map(.x = train,~lm(bwt~blength + gaweeks, data = .x)),
     fit3 = map(.x = train,~lm(bwt~bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = .x))
-  ) 
+  ) %>% 
+  mutate(
+    my_fit_rmse = map2_dbl(my_fit, test, ~rmse(model = .x, data = .y)),
+    fit2_rmse = map2_dbl(fit2, test, ~rmse(model = .x, data = .y)),
+    fit3_rmse = map2_dbl(fit3, test, ~rmse(model = .x, data = .y))
+  ) %>%
+  select(ends_with("rmse")) %>% 
+  pivot_longer(
+    everything(),names_to = "model",values_to = "rmse"
+  ) %>% 
+  ggplot(aes(model,rmse)) + geom_violin()
+
+cv_df
 ```
+
+According to the plot, the second model, which is third model(using head circumference, length, sex, and all interactions (including the three-way interaction) between these) has the best fitness.
+
+
+## Problem 2
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+
+```{r}
+set.seed(1)
+boot_straps = 
+  weather_df %>% 
+  modelr::bootstrap(n = 5000) %>% 
+  mutate(
+    model = map(strap, ~lm(tmax~tmin, data = .x)),
+    glance = map(model, broom::glance),
+    results = map(model, broom::tidy)
+  ) %>% 
+  unnest(glance) %>% 
+  select(.id, r.squared, results) %>% 
+  unnest(results) %>%
+  mutate(
+    term=str_replace(term,"\\(Intercept\\)","Intercept")
+  ) %>% 
+  pivot_wider(
+    names_from = term,
+    values_from = estimate
+  ) %>% 
+ group_by(.id) %>% 
+  summarise(intercept = max(Intercept, na.rm = TRUE),
+            tmin = max(tmin, na.rm = TRUE),
+            r.squared = mean(r.squared)) %>% 
+  mutate(
+    result = log(intercept*tmin)
+  )
+boot_straps %>% 
+  ggplot(aes(x = r.squared)) + geom_density()+
+  labs(title = 'distribution of r_squared')
+  
+boot_straps %>% 
+  ggplot(aes(x = r.squared)) + geom_density()+
+  labs(title = 'distribution of log(beta0*beta1)')
+```
+
+Both r_squared and log(beta0*beta1) follows normal distribution, which align with central limit theorem.
+
+
+```{r}
+boot_straps %>% 
+  summarize(
+    r_squared_ci_lower = quantile(r.squared, 0.025), 
+    r_squared_ci_upper = quantile(r.squared, 0.975),
+    result_ci_lower = quantile(result, 0.025), 
+    result_ci_upper = quantile(result, 0.975)) %>% 
+  knitr::kable(caption = '95% CIs')
+```
+
+
 
 
 
