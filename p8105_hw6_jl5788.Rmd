@@ -1,0 +1,116 @@
+---
+title: "homework6"
+output: github_document
+---
+
+```{r setup, include = FALSE}
+library(tidyverse)
+
+library(rvest)
+library(httr)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.color = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_color_discrete = scale_color_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+
+## Problem 1
+
+Data clean
+```{r}
+baby_birthweight_df=read.csv("data/birthweight.csv") %>% 
+  select(-pnumlbw,-pnumsga) %>%
+  mutate(babysex=as.factor(babysex),frace=as.factor(frace),mrace=as.factor(mrace),malform=as.factor(malform)) %>% 
+  filter(!menarche<5) %>% 
+  filter(!fincome<5) %>% 
+  mutate(babysex=factor(babysex, levels = 1:2, labels = c("female", "male"))) %>%     mutate(mrace=factor(mrace,levels=1:5,labels=c("White","Black","Asian","Puerto Rican","Other"))) %>% 
+  mutate(malform=factor(malform,levels = 0:1,labels=c("absent","present"))) %>% 
+  mutate(frace=factor(frace,levels = 1:9,labels=c("White","Black","Asian","Puerto Rican","Other","","","Other","Unkown"))) %>% 
+  mutate(mrace=fct_infreq(mrace)) %>% 
+  select(babysex,bhead,blength,bwt,gaweeks,mrace)
+
+colSums(is.na(baby_birthweight_df))
+baby_birthweight_df %>% skimr::skim_without_charts()
+```
+
+There is a sense that baby's head circumference at birth positively correlated to baby's birth weight and at the genetic level,mother's race plays a important role in baby's birth weight.
+
+```{r}
+baby_birthweight_df %>% 
+  ggplot(aes(x=bhead,y=bwt,color=mrace)) + geom_point(alpha=0.4) 
+
+baby_birthweight_df %>% 
+  ggplot(aes(x=bhead,y=bwt)) + geom_point(alpha=0.4) + facet_wrap(.~mrace)
+
+baby_birthweight_df %>% 
+  ggplot(aes(x=mrace,y=bwt)) + geom_violin(alpha=0.4)
+```
+
+The plots above sort of align with the hypothesis that baby's head circumference at birth and mother's race are two factors underlying baby's birthweight.
+
+
+The model I propose is:
+```{r}
+my_fit = lm(bwt ~ bhead  +  mrace,data=baby_birthweight_df )
+
+broom::tidy(my_fit) %>% 
+  select(term,estimate,p.value) %>% 
+  mutate(term=str_replace(term,"mrace","Mother's race:")) 
+
+```
+
+```{r}
+baby_birthweight_df %>% 
+  modelr::add_residuals(my_fit) %>% 
+  modelr::add_predictions(my_fit) %>% 
+  select(bwt,bhead,mrace,resid,pred) %>% 
+  ggplot(aes(x=pred,y=resid)) + geom_point(alpha=0.3) 
+```
+
+Two other models 
+
+```{r}
+fit2=lm(bwt~blength + gaweeks,data=baby_birthweight_df)
+summary(fit2)
+
+fit3=lm(bwt~bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex,data=baby_birthweight_df)
+summary(fit3)
+
+```
+
+Compare 3 models
+
+```{r}
+cv_df=
+  crossv_mc(baby_birthweight_df,100) %>% 
+  mutate(
+    train=map(train,as.tibble),
+    test=map(test,as.tibble)
+  ) %>% 
+  mutate(my_fit = map(.x = train, ~lm(bwt ~ bhead + mrace, data = .x )),
+    fit2 = map(.x = train,~lm(bwt~blength + gaweeks, data = .x)),
+    fit3 = map(.x = train,~lm(bwt~bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = .x))
+  ) 
+```
+
+
+
+
+
+
+
+
+
